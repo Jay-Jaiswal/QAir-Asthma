@@ -5,6 +5,7 @@
   },
   "build": {
     "production": {
+      "environment": "production",
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease",
@@ -15,6 +16,7 @@
       }
     },
     "production-apk": {
+      "environment": "production",
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease",

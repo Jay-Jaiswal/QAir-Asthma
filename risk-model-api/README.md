@@ -43,3 +43,19 @@ Example request:
 The development endpoint intentionally has no authentication. Put it behind
 authentication and HTTPS before production deployment; do not expose the model
 file.
+
+## Deploy with Render
+
+The repository includes [`render.yaml`](../render.yaml) and
+[`Dockerfile`](./Dockerfile). Create a Render Web Service from this repository
+and choose the included Blueprint configuration. Render will build the image,
+copy the model file, expose `/health`, and provide an HTTPS service URL.
+
+The mobile URL is the Render URL plus `/predict`, for example:
+
+```text
+https://qair-risk-model-api.onrender.com/predict
+```
+
+The API currently has no authentication. Add authentication and rate limiting
+before making it available publicly.

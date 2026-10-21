@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: qair-risk-model-api
+    runtime: docker
+    dockerfilePath: ./risk-model-api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: RISK_MODEL_PATH
+        value: /app/model/respira_random_forest.pkl
