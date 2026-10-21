@@ -1,8 +1,7 @@
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import { supabase } from '@/utils/supabase';
-import { fetchEnvironmentalData } from '@/utils/environmentalDataAPI';
-import { checkTriggerSimilarity } from '@/utils/riskAssessment';
+import { predictRiskAtLocation, toRiskAssessment } from '@/utils/riskModelAPI';
 import { sendRiskAlert } from '@/utils/notificationService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -23,10 +22,8 @@ TaskManager.defineTask(BACKGROUND_RISK_TASK, async ({ data, error }) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const envData = await fetchEnvironmentalData(coords.latitude, coords.longitude);
-    if (!envData) return;
-
-    const assessment = await checkTriggerSimilarity(envData, user.id);
+    const prediction = await predictRiskAtLocation(coords.latitude, coords.longitude);
+    const assessment = toRiskAssessment(prediction);
     if (assessment.isRisky) {
       // 1-minute cooldown across background runs
       const tsStr = await AsyncStorage.getItem('riskNotifyLastTs');

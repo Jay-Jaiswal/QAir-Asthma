@@ -2,7 +2,7 @@
 // Rule-based comparison engine to detect risky conditions based on user's trigger history
 
 import { supabase } from './supabase';
-import { EnvironmentalData } from './environmentalDataAPI';
+import { EnvironmentalData, ModelFeatures } from './environmentalDataAPI';
 
 // Thresholds for similarity matching (adjustable based on user sensitivity)
 export const SIMILARITY_THRESHOLDS = {
@@ -33,6 +33,8 @@ export type RiskAssessment = {
   riskFactors: string[];
   recommendations: string[];
   similarityScore: number; // 0-100, how similar to past triggers
+  riskProbability?: number;
+  modelFeatures?: ModelFeatures;
 };
 
 /**

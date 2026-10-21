@@ -22,6 +22,82 @@ export type EnvironmentalData = {
   timestamp: string;
 };
 
+export type ModelFeatures = {
+  pm2_5_24h_mean: number;
+  nitrogen_dioxide_24h_mean: number;
+  ozone_8h_max: number;
+};
+
+type OpenMeteoHourlyResponse = {
+  hourly?: {
+    time?: string[];
+    pm2_5?: (number | null)[];
+    nitrogen_dioxide?: (number | null)[];
+    ozone?: (number | null)[];
+  };
+};
+
+const hasFiniteValues = (values: (number | null)[]): values is number[] =>
+  values.length > 0 && values.every((value) => typeof value === 'number' && Number.isFinite(value));
+
+/**
+ * Build the daily features used by the trained model.
+ * The model was trained without imputation, so incomplete windows are rejected.
+ */
+export const buildModelFeatures = (
+  pm25: (number | null)[],
+  nitrogenDioxide: (number | null)[],
+  ozone: (number | null)[]
+): ModelFeatures => {
+  if (pm25.length !== 24 || nitrogenDioxide.length !== 24 || ozone.length !== 24) {
+    throw new Error('Exactly 24 hourly pollution values are required');
+  }
+  if (!hasFiniteValues(pm25) || !hasFiniteValues(nitrogenDioxide) || !hasFiniteValues(ozone)) {
+    throw new Error('Hourly pollution data contains missing or invalid values');
+  }
+
+  const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const ozoneMeans = Array.from({ length: ozone.length - 7 }, (_, start) =>
+    mean(ozone.slice(start, start + 8))
+  );
+
+  return {
+    pm2_5_24h_mean: mean(pm25),
+    nitrogen_dioxide_24h_mean: mean(nitrogenDioxide),
+    ozone_8h_max: Math.max(...ozoneMeans),
+  };
+};
+
+/**
+ * Fetch the latest complete 24-hour pollution window from Open-Meteo.
+ */
+export const fetchModelFeatures = async (lat: number, lon: number): Promise<ModelFeatures> => {
+  const response = await axios.get<OpenMeteoHourlyResponse>(
+    'https://air-quality-api.open-meteo.com/v1/air-quality',
+    {
+      params: {
+        latitude: lat,
+        longitude: lon,
+        hourly: 'pm2_5,nitrogen_dioxide,ozone',
+        past_days: 1,
+        forecast_days: 1,
+        timezone: 'UTC',
+      },
+      timeout: 10000,
+    }
+  );
+
+  const hourly = response.data.hourly;
+  const pm25 = hourly?.pm2_5;
+  const nitrogenDioxide = hourly?.nitrogen_dioxide;
+  const ozone = hourly?.ozone;
+  if (!pm25 || !nitrogenDioxide || !ozone) {
+    throw new Error('Open-Meteo response did not include all model pollutants');
+  }
+
+  return buildModelFeatures(pm25.slice(-24), nitrogenDioxide.slice(-24), ozone.slice(-24));
+};
+
 /**
  * Fetch Air Quality Index (AQI) data from OpenWeather API
  * @param lat Latitude

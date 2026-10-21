@@ -4,7 +4,7 @@
  * This component provides a comprehensive asthma risk monitoring system:
  * 1. Fetches current location
  * 2. Gets real-time environmental data (AQI, weather, pollen)
- * 3. Compares with user's trigger history
+ * 3. Sends engineered pollution features to the trained risk model
  * 4. Sends proactive alerts if conditions match past triggers
  * 5. Supports geofencing for automatic monitoring
  * 
@@ -27,7 +27,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/utils/supabase';
 import { getCurrentLocation, requestBackgroundLocationPermission, getLocationPermissionStatus } from '@/utils/geofencing';
 import { fetchEnvironmentalData, EnvironmentalData } from '@/utils/environmentalDataAPI';
-import { checkTriggerSimilarity, RiskAssessment } from '@/utils/riskAssessment';
+import { RiskAssessment } from '@/utils/riskAssessment';
+import { predictRiskAtLocation, toRiskAssessment } from '@/utils/riskModelAPI';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendRiskAlert } from '@/utils/notificationService';
 import { startBackgroundRiskMonitoring, stopBackgroundRiskMonitoring } from '@/utils/backgroundMonitoring';
@@ -41,7 +42,7 @@ export default function PredictiveRiskAlert() {
   const [lastCheckTime, setLastCheckTime] = useState<Date | null>(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [monitorTimer, setMonitorTimer] = useState<NodeJS.Timer | null>(null);
+  const [monitorTimer, setMonitorTimer] = useState<ReturnType<typeof setInterval> | null>(null);
   const [lastNotifyTs, setLastNotifyTs] = useState<number | null>(null);
   const monitoringEnabledRef = useRef(false);
 
@@ -79,7 +80,7 @@ export default function PredictiveRiskAlert() {
       sub.remove();
       // Cleanup interval on unmount
       if (monitorTimer) {
-        clearInterval(monitorTimer as unknown as number);
+        clearInterval(monitorTimer);
       }
     };
   }, []);
@@ -96,8 +97,8 @@ export default function PredictiveRiskAlert() {
    * Main function to check current risk level
    * Performs the complete workflow:
    * 1. Get location
-   * 2. Fetch environmental data
-   * 3. Compare with trigger history
+   * 2. Fetch environmental data and model features
+   * 3. Request a model prediction
    * 4. Display alert if risky
    */
   const checkCurrentRisk = async () => {
@@ -127,24 +128,20 @@ export default function PredictiveRiskAlert() {
 
       setCurrentLocation({ lat: location.latitude, lon: location.longitude });
 
-      // Step 3: Fetch environmental data (AQI, weather, pollen)
-      const envData = await fetchEnvironmentalData(location.latitude, location.longitude);
-      if (!envData) {
-        Alert.alert(
-          'Data Unavailable',
-          'Could not fetch environmental data. Please check your internet connection.'
-        );
-        return;
-      }
-
-      setEnvironmentalData(envData);
-
-      // Step 4: Compare with trigger history
-      const assessment = await checkTriggerSimilarity(envData, user.id);
+      // Step 3: Use only Open-Meteo engineered pollution features for prediction.
+      const prediction = await predictRiskAtLocation(location.latitude, location.longitude);
+      const assessment = toRiskAssessment(prediction);
       setRiskAssessment(assessment);
       setLastCheckTime(new Date());
 
-      // Step 5: Display alert based on risk level
+      // The legacy weather/pollen panel is supplementary and must not block
+      // the model result when its optional providers are unavailable.
+      const envData = await fetchEnvironmentalData(location.latitude, location.longitude);
+      if (envData) {
+        setEnvironmentalData(envData);
+      }
+
+      // Step 4: Display alert based on risk level
       displayRiskAlert(assessment, envData);
     } catch (error) {
       // Error handled silently
@@ -157,7 +154,7 @@ export default function PredictiveRiskAlert() {
   /**
    * Display appropriate alert based on risk level
    */
-  const displayRiskAlert = (assessment: RiskAssessment, envData: EnvironmentalData) => {
+  const displayRiskAlert = (assessment: RiskAssessment, envData: EnvironmentalData | null) => {
     // Also send a local notification when risk is medium/high, with 1-minute cooldown
     if (assessment.isRisky) {
       const now = Date.now();
@@ -181,9 +178,8 @@ export default function PredictiveRiskAlert() {
     if (assessment.riskLevel === 'high') {
       Alert.alert(
         '🚨 HIGH ASTHMA RISK ALERT',
-        `You are in an area with conditions VERY similar to your past asthma triggers!\n\n` +
-        `Similarity Score: ${assessment.similarityScore}%\n` +
-        `Matched Triggers: ${assessment.matchedTriggers.length}\n\n` +
+        `The model estimates a ${assessment.riskProbability! * 100}% environmental risk.\n\n` +
+        `Model probability: ${Math.round((assessment.riskProbability ?? 0) * 100)}%\n\n` +
         `Risk Factors:\n${assessment.riskFactors.slice(0, 3).join('\n')}\n\n` +
         `Recommendations:\n${assessment.recommendations.slice(0, 2).join('\n')}`,
         [
@@ -194,28 +190,17 @@ export default function PredictiveRiskAlert() {
     } else if (assessment.riskLevel === 'medium') {
       Alert.alert(
         '⚠️ Moderate Asthma Risk',
-        `Conditions in this area may trigger asthma symptoms.\n\n` +
-        `Similarity Score: ${assessment.similarityScore}%\n\n` +
+        `The model estimates a ${Math.round((assessment.riskProbability ?? 0) * 100)}% environmental risk.\n\n` +
         `Be prepared:\n${assessment.recommendations.slice(0, 2).join('\n')}`,
         [{ text: 'OK' }]
-      );
-    } else if (assessment.matchedTriggers.length === 0) {
-      Alert.alert(
-        '📊 No Trigger History',
-        `Start recording your asthma triggers on the map to get personalized risk alerts!\n\n` +
-        `Current Conditions:\n` +
-        `AQI: ${envData.aqi}\n` +
-        `Temperature: ${envData.temperature}°C\n` +
-        `Humidity: ${envData.humidity}%`,
-        [{ text: 'Got It' }]
       );
     } else {
       Alert.alert(
         '✅ Low Risk',
-        `Conditions look safe! The air quality is good.\n\n` +
-        `AQI: ${envData.aqi}\n` +
-        `Temperature: ${envData.temperature}°C\n` +
-        `Humidity: ${envData.humidity}%`,
+        `The model estimates a ${Math.round((assessment.riskProbability ?? 0) * 100)}% environmental risk.` +
+        (envData
+          ? `\n\nCurrent Conditions:\nAQI: ${envData.aqi}\nTemperature: ${envData.temperature}°C\nHumidity: ${envData.humidity}%`
+          : ''),
         [{ text: 'Great!' }]
       );
     }
@@ -232,7 +217,7 @@ export default function PredictiveRiskAlert() {
     setMonitoringEnabled(true);
     monitoringEnabledRef.current = true;
     if (monitorTimer) {
-      clearInterval(monitorTimer as unknown as number);
+      clearInterval(monitorTimer);
     }
     const timer = setInterval(() => {
       // Skip if a run is already in progress
@@ -287,7 +272,7 @@ export default function PredictiveRiskAlert() {
       setMonitoringEnabled(false);
       monitoringEnabledRef.current = false;
       if (monitorTimer) {
-        clearInterval(monitorTimer as unknown as number);
+        clearInterval(monitorTimer);
         setMonitorTimer(null);
       }
       // Stop background monitoring if running
@@ -337,7 +322,7 @@ export default function PredictiveRiskAlert() {
             <Text className="text-white text-2xl font-bold ml-3">Risk Monitor</Text>
           </View>
           <Text className="text-indigo-100 text-sm">
-            Predictive alerts based on your trigger history
+            Model-based alerts from current pollution conditions
           </Text>
         </LinearGradient>
 
@@ -375,11 +360,13 @@ export default function PredictiveRiskAlert() {
                   style={{ color: getRiskColor(riskAssessment.riskLevel) }}>
                   {riskAssessment.riskLevel.toUpperCase()}
                 </Text>
-                <Text className="text-slate-300 text-lg">{riskAssessment.similarityScore}% match</Text>
+                <Text className="text-slate-300 text-lg">
+                  {Math.round((riskAssessment.riskProbability ?? 0) * 100)}% probability
+                </Text>
               </View>
               
               <Text className="text-slate-200">
-                {riskAssessment.matchedTriggers.length} similar trigger(s) found
+                Random Forest environmental risk estimate
               </Text>
             </View>
 

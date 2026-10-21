@@ -66,6 +66,9 @@ export const sendRiskAlert = async (
   locationName?: string
 ): Promise<void> => {
   try {
+    if (riskAssessment.riskLevel === 'low') {
+      return;
+    }
     const hasPermission = await requestNotificationPermissions();
     if (!hasPermission) {
       console.log('Cannot send notification: permission denied');
@@ -94,11 +97,11 @@ export const sendRiskAlert = async (
 
     if (riskAssessment.riskLevel === 'high') {
       title = '🚨 HIGH ASTHMA RISK ALERT';
-      body = `You are ${locationName ? `at ${locationName}` : 'in an area'} with conditions very similar to your past asthma triggers. Keep your inhaler ready!`;
+      body = `The model estimates a ${Math.round((riskAssessment.riskProbability ?? 1) * 100)}% environmental risk ${locationName ? `at ${locationName}` : 'in this area'}. Keep your inhaler ready.`;
       priority = Notifications.AndroidNotificationPriority.MAX;
     } else if (riskAssessment.riskLevel === 'medium') {
       title = '⚠️ Moderate Asthma Risk';
-      body = `Conditions ${locationName ? `at ${locationName}` : 'in this area'} may trigger asthma. Be prepared and monitor your symptoms.`;
+      body = `The model estimates a ${Math.round((riskAssessment.riskProbability ?? 0.5) * 100)}% environmental risk ${locationName ? `at ${locationName}` : 'in this area'}. Be prepared and monitor your symptoms.`;
       priority = Notifications.AndroidNotificationPriority.HIGH;
     } else {
       title = '✅ Low Risk Area';
@@ -120,6 +123,8 @@ export const sendRiskAlert = async (
           riskLevel: riskAssessment.riskLevel,
           similarityScore: riskAssessment.similarityScore,
           matchedTriggers: riskAssessment.matchedTriggers.length,
+          riskProbability: riskAssessment.riskProbability,
+          modelFeatures: riskAssessment.modelFeatures,
         },
         sound: riskAssessment.riskLevel === 'high' ? 'default' : undefined,
         priority: priority,
